@@ -75,10 +75,6 @@ multiqc Trimmed/FastQC/*_fastqc.zip \
   --outdir Trimmed/FastQC
 #compiles fastqc data into one document for easy reading
 
-#Analysis notes:
-#the overrepresented sequences across all samples appear to be ribosomal RNA. This is consistent across all samples though, so I'm told it shouldn't necessarily be an issue. I may want to look into implementing a rRNA filtering step, but also these reads will be filtered out during count matrix generation... 
-
-
 ```
 
 ```{bash, eval = FALSE}
