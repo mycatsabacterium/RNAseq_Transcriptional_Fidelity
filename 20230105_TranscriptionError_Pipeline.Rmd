@@ -118,13 +118,12 @@ do
   -S bowtie2/${sample}.sam
 done
 #aligning reads to indexed 14028s genome
-#"-p 8", my mac has 4 cores with hyperthreading enabled, so I have 8 threads available. This setting increases alignment throughput by running alignments in parallel
+#"-p 8" This setting increases alignment throughput by running alignments in parallel
 #"--phred33" is telling bowtie2 what type of quality scoring is present in the reads
 #"--reorder" makes sure that the output file is printed in the order of the original input file, important if you have "-p" set to more than 1.
 #rg-id and rg must match in the specified formats otherwise GATK tools will throw errors. You can get this info from the fastq files "H2WVVDSX2" is the machine, "4" is the flow cell and "ILLUMINA" is the platform. The "lib1" information is arbitrary info I added bc it needs that "LB" section. Different libraries are usually defined as sequencing libraries prepared by different people/ or on different days, so that does not apply to us in this instance. 
 
 
-#WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 
 ```
 
 ```{bash, eval = FALSE}
@@ -217,7 +216,7 @@ do
 done
 
 #running two different stat programs to get an idea of read makeup across the samples
-#"-@" argument is number of ADDITIONAL threads (my mac has 8 total, so 8-1...)
+#"-@" argument is number of ADDITIONAL threads
 
 multiqc mapstats/*stat.txt \
   --outdir mapstats
