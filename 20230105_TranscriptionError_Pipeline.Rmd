@@ -1,0 +1,495 @@
+---
+title: "20221212_TranscriptionError_Pipeline"
+author: "Alyssa Margolis"
+output: html_document
+date: "2022-12-05"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                     root.dir = "/Documents/GradSchool/Lab/Informatics")
+#sets the working directory for knitting the document
+```
+
+## R Markdown
+
+Before running, you will need to have the following installed:
+ - fastqc (instructions below)
+ - multiqc
+ - cutadapt
+ - trim-galore
+ - bowtie2
+ - samtools
+ - freebayes
+ - bcftools
+ - vcflib (may also need to install "tectonic" separately since it needs that package for the vcfstats function, but the base vcflib install doesn't install this dependency correctly or something...)
+ - pysamstats
+ 
+Conda is recommended for managing environments. For installing packages, mamba is highly recommended over conda.
+
+```{bash, eval = FALSE}
+#to install fastQC to run in terminal follow the instructions at: https://www.bioinformatics.babraham.ac.uk/projects/fastqc/
+#how to interpret the fastQC output: https://rtsf.natsci.msu.edu/genomics/tech-notes/fastqc-tutorial-and-faq/
+
+#exit 1 #remove this command if you would like to run the chunk
+
+mkdir -p data/sashi_rnaseq/FastQC
+#makes a new directory for the fastQC files
+
+fastqc \
+  data/sashi_rnaseq/*.fastq.gz \
+  --outdir data/sashi_rnaseq/FastQC/
+#runs fastQC on all fastq files in the specified directory and outputs them into the specified directory
+
+multiqc data/sashi_rnaseq/FastQC/*_fastqc.zip \
+  --outdir data/sashi_rnaseq/FastQC
+#compiles fastqc data into one document for easy reading
+```
+
+```{bash, eval = FALSE}
+
+cd ./data/sashi_rnaseq
+#sets directory for where the fastq files are
+
+#exit 1 #comment out this command if you would like to run the chunk
+
+mkdir -p Trimmed/FastQC
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do 
+  echo -en $sample"\t"
+  trim_galore \
+    --paired ${sample}_R1.fastq.gz ${sample}_R2.fastq.gz \
+    --illumina \
+    --stringency 12 \
+    --fastqc_args "--outdir Trimmed/FastQC" \
+    --output_dir Trimmed
+done
+#trims the adapter sequences off the reads and trims low quality reads to increase downstream alignment accuracy
+#there are many (~700-800) direct matches to the 13bp illumina adapters in the 14028s genome, therefore increasing stringency helps to prevent trimming of non-adapter sequences
+#if you would like trim_galore to auto-detect the adapters, remove the "--illumina" argument
+
+multiqc Trimmed/FastQC/*_fastqc.zip \
+  --outdir Trimmed/FastQC
+#compiles fastqc data into one document for easy reading
+
+#Analysis notes:
+#the overrepresented sequences across all samples appear to be ribosomal RNA. This is consistent across all samples though, so I'm told it shouldn't necessarily be an issue. I may want to look into implementing a rRNA filtering step, but also these reads will be filtered out during count matrix generation... 
+
+
+```
+
+```{bash, eval = FALSE}
+#Downloaded this genome assembly (dna.toplevel.fa.gz) in fasta format: https://bacteria.ensembl.org/Salmonella_enterica_subsp_enterica_serovar_typhimurium_str_14028s_gca_000022165/Info/Index/
+
+#renamed the file to shorten it a bit: Salmonella_str_14028s_gca_000022165.1.fa
+
+#bowtie2-build Salmonella_str_14028s_gca_000022165.1.fa ~/Documents/GradSchool/Lab/Informatics/Index/14028s
+#creates an index from genome assembly
+#only need to run this once for your genome and then can use this index for future projects
+
+#to inspect the contents of your index: 
+#bowtie2-inspect -n 14028s
+
+#exit 1 #comment out this command if you would like to run the chunk
+
+mkdir -p data/sashi_rnaseq/bowtie2/unaligned
+#makes directory for bowtie2 data
+
+cd ./data/sashi_rnaseq
+
+samples="greAB_U4"
+
+for sample in $samples
+do 
+  bowtie2 \
+  -x ~/Documents/GradSchool/Lab/Informatics/Index/14028s \
+  -1 Trimmed/${sample}_R1_val_1.fq.gz \
+  -2 Trimmed/${sample}_R2_val_2.fq.gz \
+  -p 8 \
+  --no-unal \
+  --phred33 \
+  --reorder \
+  --rg-id "H2WVVDSX2"."4"."$sample" \
+  --rg "ID:H2WVVDSX2.4.$sample" \
+  --rg "PL:ILLUMINA" \
+  --rg "LB:lib1" \
+  --rg "PU:H2WVVDSX2.4" \
+  --rg "SM:$sample" \
+  --un-conc-gz bowtie2/unaligned/${sample}_R%-un.fastq.gz \
+  -S bowtie2/${sample}.sam
+done
+#aligning reads to indexed 14028s genome
+#"-p 8", my mac has 4 cores with hyperthreading enabled, so I have 8 threads available. This setting increases alignment throughput by running alignments in parallel
+#"--phred33" is telling bowtie2 what type of quality scoring is present in the reads
+#"--reorder" makes sure that the output file is printed in the order of the original input file, important if you have "-p" set to more than 1.
+#rg-id and rg must match in the specified formats otherwise GATK tools will throw errors. You can get this info from the fastq files "H2WVVDSX2" is the machine, "4" is the flow cell and "ILLUMINA" is the platform. The "lib1" information is arbitrary info I added bc it needs that "LB" section. Different libraries are usually defined as sequencing libraries prepared by different people/ or on different days, so that does not apply to us in this instance. 
+
+
+#WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 
+```
+
+```{bash, eval = FALSE}
+
+#exit 1 #comment out this command if you would like to run the chunk
+
+cd ./data/sashi_rnaseq/bowtie2
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  samtools view \
+  -bo ${sample}.bam \
+  -h \
+  ${sample}.sam
+done
+
+#generates bam files from sam. Bam format is preferred for many downstream applications
+#-h includes header in output
+
+```
+
+```{bash, eval = FALSE}
+
+#exit 1 #comment out this command if you would like to run the chunk
+
+cd ./data/sashi_rnaseq/bowtie2
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  samtools sort \
+  ${sample}.bam \
+  -o ${sample}_coordsorted.bam
+done
+
+#generates bam file sorted by coordinates for easy visualization in igv and this format can be passed into featureCounts. 
+#-n to sort by queryname instead
+
+#if you would like to view the bam files in igv, must first index it with the following command:
+#samtools index WT_H1_matemap_coordsorted.bam 
+
+
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2
+
+mkdir -p nosingletons
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  samtools view \
+  -bo nosingletons/${sample}_matemap_coordsorted.bam \
+  -h \
+  -F 0x08 \
+  -@ 7 \
+  ${sample}_coordsorted.bam
+done
+
+#removing singletons (reads where the mate was unmapped)
+
+
+```
+
+```{bash, eval = FALSE}
+
+#exit 1 #comment out this command if you would like to run the chunk
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons
+
+mkdir -p mapstats
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  samtools flagstat \
+  -@ 7 \
+  ${sample}_matemap_coordsorted.bam > mapstats/${sample}_matemap_flagstat.txt
+  samtools stats \
+  -@ 7 \
+  -r ~/Documents/GradSchool/Lab/Informatics/Ref_Genome/Salmonella_str_14028s_gca_000022165.1.fa \
+  ${sample}_matemap_coordsorted.bam > mapstats/${sample}_matemap_stat.txt
+done
+
+#running two different stat programs to get an idea of read makeup across the samples
+#"-@" argument is number of ADDITIONAL threads (my mac has 8 total, so 8-1...)
+
+multiqc mapstats/*stat.txt \
+  --outdir mapstats
+
+```
+
+```{bash}
+
+cd ./Ref_Genome
+
+picard CreateSequenceDictionary \
+  -R Salmonella_str_14028s_gca_000022165.1.fa
+
+#creating .dict file from reference sequence. This is needed for some downstream analysis tools
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons
+
+mkdir -p freebayes
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  freebayes \
+  -f ~/Documents/GradSchool/Lab/Informatics/Ref_Genome/Salmonella_str_14028s_gca_000022165.1.fa \
+  --ploidy 1 \
+  -b ${sample}_matemap_coordsorted.bam \
+  -m 30 \
+  -q 20 \
+  -C 1 \
+  -v freebayes/${sample}_matemap.vcf
+done
+
+#generate vcf files for the samples, then use those to compare in the picard CollectSamErrorMetrics tool. The combined variants in the untreated samples should give a good idea of what new variants are happening during H2O2 treatment.
+
+#-m minimum mapping quality
+#-q minimum base quality 
+#-C minimum alternate count
+
+```
+
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons/freebayes
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  bgzip ${sample}_matemap.vcf
+  tabix \
+  -p vcf \
+  ${sample}_matemap.vcf.gz
+done
+
+#compresses the vcf file and then indexes it
+
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons/freebayes
+
+mkdir -p stats
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  bcftools stats \
+  -F ~/Documents/GradSchool/Lab/Informatics/Ref_Genome/Salmonella_str_14028s_gca_000022165.1.fa \
+  -s - \
+  ${sample}_matemap.vcf.gz > stats/${sample}_matemap_vcf.stats
+done
+
+#generating summary stats from vcf files 
+
+multiqc stats/*vcf.stats \
+  --outdir stats
+
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons/freebayes
+
+mkdir -p plots
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  plot-vcfstats \
+  -p plots/${sample} \
+  -t ${sample} \
+  stats/${sample}_matemap_vcf.stats
+done
+
+#plotting summary stats of vcf files
+
+```
+
+```{bash}
+
+#generating a feature list for annotating the vcf file
+
+#downloaded a Genebank feature table (.txt) from the Assembly page https://www.ncbi.nlm.nih.gov/assembly/GCF_000022165.1#/qa
+
+#processed txt file using first Rcode chunk in matching Rmarkdown file 
+
+##add a single "#" before the first word of the header line to indicate that this is the header
+
+cd ./Ref_Genome
+
+sort -k1,1 -k2,2n -k3,3n -t$'\t' 14028s_features.tab > 14028s_features_sort.tab
+
+bgzip 14028s_features_sort.tab
+
+tabix -S 1 -s 1 -b 2 -e 3 14028s_features_sort.tab.gz
+
+#this took me a while to figure out, I used this post as a reference: 
+#https://www.biostars.org/p/122690/
+
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons/freebayes
+
+mkdir -p bcftools
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  bcftools annotate \
+  -a ~/Documents/GradSchool/Lab/Informatics/Ref_Genome/14028s_features_sort.tab.gz \
+  -h ~/Documents/GradSchool/Lab/Informatics/header.hdr \
+  -c CHROM,FROM,TO,INFO/locus_tag,INFO/strand,-,INFO/gene,INFO/product \
+  ${sample}_matemap.vcf.gz > bcftools/${sample}_bcftools.vcf 
+  bgzip bcftools/${sample}_bcftools.vcf
+  tabix \
+  -p vcf \
+  bcftools/${sample}_bcftools.vcf.gz
+done
+
+#annotates vcf files with a custom annotation database pulled from Genbank 
+
+#the header file will need to be made, you can find instructions in the previous chunk's biostars link
+
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools
+
+mkdir -p snpfiltered
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  gzcat \
+  ${sample}_bcftools.vcf.gz \
+  | vcffilter \
+  -f "QUAL > 1" \
+  | vcfsnps \
+  | grep \
+  -vf filtered/multicopy_genes.txt \
+  | bgzip > snpfiltered/${sample}_snpfiltered_bcftools.vcf.gz
+  tabix \
+  -p vcf \
+  snpfiltered/${sample}_snpfiltered_bcftools.vcf.gz
+done
+
+#filtering steps. vcffilter for qual > 1 is the base recommendation from the creator of freebayes. Followed by filtering for only snps to remove indels and other types of variants. Remove "vcfsnps" section if you want to retain all variants
+
+#made a list of the multicopy genes in the genome (tuf genes and 23S, 16S, and 5S subunits) and removing those lines from the vcf. Cannot tell what reads are truly mapping to what multicopy gene, so better to remove before analyzing further
+
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons/freebayes
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  echo -en $sample"\t"
+  gzcat ${sample}_matemap.vcf.gz | grep -c -v "^#"
+  echo -en "\t"
+  gzcat bcftools/snpfiltered/${sample}_snpfiltered_bcftools.vcf.gz | grep -c -v "^#"
+done
+
+#counts how many variants were identified in each vcf file to compare the effects of my filtering steps on variants identified. 
+
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/
+
+mkdir -p stats
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  bcftools stats \
+  -F ~/Documents/GradSchool/Lab/Informatics/Ref_Genome/Salmonella_str_14028s_gca_000022165.1.fa \
+  -s - \
+  ${sample}_snpfiltered_bcftools.vcf.gz > stats/${sample}_snpfiltered_bcftools_vcf.stats
+done
+
+multiqc stats/*vcf.stats \
+  --outdir stats
+  
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons
+
+mkdir -p pysamstats
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  pysamstats \
+  -t variation_strand \
+  --min-mapq=30 \
+  --min-baseq=20 \
+  -f ~/Documents/GradSchool/Lab/Informatics/Ref_Genome/Salmonella_str_14028s_gca_000022165.1.fa \
+  ${sample}_matemap_coordsorted.bam > pysamstats/${sample}_pysamstats_strand.txt
+done
+
+#samtools index ${sample}_matemap_coordsorted.bam
+
+#generating samstats file that contains pileup-like data that counts reads per position and matches/mismatches with the associated nucleotides those calls. 
+#Using MapQ = 30 and base quality = 20 to match freebayes' settings for variant calls
+
+```
+
+```{bash}
+
+cd ./data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/
+
+mkdir -p genes
+
+samples="WT_H1 WT_H2 WT_H3 WT_H4 WT_U1 WT_U2 WT_U3 WT_U4 greAB_H1 greAB_H2 greAB_H3 greAB_H4 greAB_U1 greAB_U2 greAB_U3 greAB_U4"
+
+for sample in $samples
+do
+  bcftools query \
+  -f '%CHROM\t%POS\t%REF\t%ALT\t%INFO/gene\t%INFO/locus_tag\t%INFO/strand\t%INFO/AO\n' \
+  ${sample}_snpfiltered_bcftools.vcf.gz \
+  -o genes/${sample}_genes_snpfiltered_bcftools.txt
+done
+
+#filtering data out of the vcf for position, gene, and locus_tag for downstream processing in R
+
+```
+
+
+

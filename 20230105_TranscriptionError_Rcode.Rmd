@@ -1,0 +1,1754 @@
+---
+title: "20230105_TranscriptionError_Rcode"
+output: html_document
+date: "2023-01-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                     root.dir = "/Documents/GradSchool/Lab/Informatics")
+```
+
+## R Markdown
+
+```{r}
+
+library(tidyverse)
+library(readxl)
+library(data.table)
+library(janitor)
+library(clusterProfiler)
+library(purrr)
+library(latex2exp)
+
+```
+
+```{r}
+
+#generating a custom feature table in the correct format for annotating variant call data and also for later use in this rmarkdown
+
+#downloaded a Genebank feature table (.txt) from the Assembly page and saved as xlsx prior to importing https://www.ncbi.nlm.nih.gov/assembly/GCF_000022165.1#/qa
+
+feature_table <- read_excel("Ref_Genome/GCA_000022165.1_feature_table.xlsx")
+
+
+#replacing blank data under the chromosome column with the correct name of the chromosome and plasmid to match the fasta file
+
+feature_table$chromosome[feature_table$seq_type == "chromosome"] <- "Chromosome"
+
+feature_table$chromosome[feature_table$seq_type == "plasmid"] <- "unnamed"
+
+#filtering out gene features and other features so that I can eventually combine the two data with name data populated
+
+gene_features <- feature_table %>%
+  filter(feature == "gene" ) %>%
+  select(chromosome, start, end, locus_tag, strand, feature_interval_length, symbol, name)
+
+other_features <- feature_table %>%
+  filter(feature %in% c("CDS", "ncRNA", "rRNA", "tRNA")) %>%
+  select(chromosome, start, end, locus_tag, strand, feature_interval_length, symbol, name)
+
+#combining the dataframes so that I can replace blank data under name and then insert any rows in gene_features that are unique to other_features
+
+combined_features <- rows_upsert(gene_features, other_features, by = "locus_tag")
+
+#sorting the file by locus_tag
+
+combined_features <- combined_features[order(combined_features$locus_tag),]
+
+#reassigning column names
+
+colnames(combined_features) <- c("CHROM", "FROM", "TO", "locus_tag", "strand", "feature_length", "gene", "product")
+
+#removing spaces
+
+combined_features$product <- gsub(" ", "_", combined_features$product)
+
+#removing potential escapes and other stuff that is note great
+
+combined_features$product <- gsub("/", "-", combined_features$product)
+
+combined_features$product <- gsub(";", "-", combined_features$product)
+
+combined_features$product <- gsub(":", "-", combined_features$product)
+
+combined_features$product <- gsub("=", "", combined_features$product)
+
+#writing the dataframe to a tab-deliminated file in a format that taibx prefers
+
+write.table(combined_features, 
+            "Ref_Genome/14028s_features.tab",
+            quote = FALSE,
+            row.names = FALSE,
+            na = ".",
+            sep = "\t")
+
+
+```
+
+```{r}
+
+#reading in each of the pysamstats files
+
+WT_H1_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/WT_H1_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+WT_H2_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/WT_H2_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+WT_H3_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/WT_H3_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+WT_H4_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/WT_H4_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+WT_U1_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/WT_U1_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+WT_U2_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/WT_U2_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+WT_U3_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/WT_U3_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+WT_U4_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/WT_U4_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+greAB_H1_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/greAB_H1_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+greAB_H2_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/greAB_H2_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+greAB_H3_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/greAB_H3_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+greAB_H4_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/greAB_H4_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+greAB_U1_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/greAB_U1_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+greAB_U2_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/greAB_U2_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+greAB_U3_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/greAB_U3_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+
+greAB_U4_bamstats <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/pysamstats/greAB_U4_pysamstats.txt",
+                                 sep = "\t",
+                                 header = TRUE)
+```
+
+```{r}
+
+WT_H1_bamstats <- setDT(WT_H1_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+WT_H2_bamstats <- setDT(WT_H2_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+WT_H3_bamstats <- setDT(WT_H3_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+WT_H4_bamstats <- setDT(WT_H4_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+WT_U1_bamstats <- setDT(WT_U1_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+WT_U2_bamstats <- setDT(WT_U2_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+WT_U3_bamstats <- setDT(WT_U3_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+WT_U4_bamstats <- setDT(WT_U4_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+greAB_H1_bamstats <- setDT(greAB_H1_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+greAB_H2_bamstats <- setDT(greAB_H2_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+greAB_H3_bamstats <- setDT(greAB_H3_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+greAB_H4_bamstats <- setDT(greAB_H4_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+greAB_U1_bamstats <- setDT(greAB_U1_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+greAB_U2_bamstats <- setDT(greAB_U2_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+greAB_U3_bamstats <- setDT(greAB_U3_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+greAB_U4_bamstats <- setDT(greAB_U4_bamstats)[!(pos %between% c(3612160,3613344) | #tuf_1
+                                          pos %between% c(4374184,4375368) | #tuf_2
+                                          pos %between% c(291944,295036) | #rrlH
+                                          pos %between% c(2850588,2853681) | #rrlG
+                                          pos %between% c(3580977,3583968) | #rrlD
+                                          pos %between% c(4115721,4118712) | #rrlC
+                                          pos %between% c(4211805,4214797) | #rrlA
+                                          pos %between% c(4366770,4369761) | #rrlB
+                                          pos %between% c(4410152,4413143) | #rrlE
+                                          pos %between% c(295219,295340) | #rrfH
+                                          pos %between% c(2850274,2850395) | #rrfG
+                                          pos %between% c(3580521,3580642) | #rrfF
+                                          pos %between% c(3580766,3580887) | #rrfD
+                                          pos %between% c(4118802,4118921) | #rrfC
+                                          pos %between% c(4214886,4215007) | #rrfA
+                                          pos %between% c(4369954,4370074) | #rrfB
+                                          pos %between% c(4413336,4413457) | #rrfE  
+                                          pos %between% c(289889,291432) | #rrsH
+                                          pos %between% c(2854035,2855577) | #rrsG
+                                          pos %between% c(3584321,3585864) | #rrsD
+                                          pos %between% c(4113825,4115368) | #rrsC
+                                          pos %between% c(4209750,4211291) | #rrsA
+                                          pos %between% c(4364715,4366258) | #rrsB
+                                          pos %between% c(4408256,4409799))] #rrsE
+
+#filtering out positions of multicopy genes in the genome (tuf_1 + tuf_2, + 23S,16S,5S rRNA)
+
+```
+
+```{r}
+
+#creating a dataframe for each sample that contains the sum of each of the base reads per position
+
+WT_H1_bamsums <- data.frame(A = sum(WT_H1_bamstats$A), 
+                            C = sum(WT_H1_bamstats$C),
+                            T = sum(WT_H1_bamstats$T),
+                            G = sum(WT_H1_bamstats$G),
+                            N = sum(WT_H1_bamstats$N),
+                            row.names = "WT_H1")
+
+WT_H2_bamsums <- data.frame(A = sum(WT_H2_bamstats$A), 
+                            C = sum(WT_H2_bamstats$C),
+                            T = sum(WT_H2_bamstats$T),
+                            G = sum(WT_H2_bamstats$G),
+                            N = sum(WT_H2_bamstats$N),
+                            row.names = "WT_H2")
+
+WT_H3_bamsums <- data.frame(A = sum(WT_H3_bamstats$A), 
+                            C = sum(WT_H3_bamstats$C),
+                            T = sum(WT_H3_bamstats$T),
+                            G = sum(WT_H3_bamstats$G),
+                            N = sum(WT_H3_bamstats$N),
+                            row.names = "WT_H3")
+
+WT_H4_bamsums <- data.frame(A = sum(WT_H4_bamstats$A), 
+                            C = sum(WT_H4_bamstats$C),
+                            T = sum(WT_H4_bamstats$T),
+                            G = sum(WT_H4_bamstats$G),
+                            N = sum(WT_H4_bamstats$N),
+                            row.names = "WT_H4")
+
+WT_U1_bamsums <- data.frame(A = sum(WT_U1_bamstats$A), 
+                            C = sum(WT_U1_bamstats$C),
+                            T = sum(WT_U1_bamstats$T),
+                            G = sum(WT_U1_bamstats$G),
+                            N = sum(WT_U1_bamstats$N),
+                            row.names = "WT_U1")
+
+WT_U2_bamsums <- data.frame(A = sum(WT_U2_bamstats$A), 
+                            C = sum(WT_U2_bamstats$C),
+                            T = sum(WT_U2_bamstats$T),
+                            G = sum(WT_U2_bamstats$G),
+                            N = sum(WT_U2_bamstats$N),
+                            row.names = "WT_U2")
+
+WT_U3_bamsums <- data.frame(A = sum(WT_U3_bamstats$A), 
+                            C = sum(WT_U3_bamstats$C),
+                            T = sum(WT_U3_bamstats$T),
+                            G = sum(WT_U3_bamstats$G),
+                            N = sum(WT_U3_bamstats$N),
+                            row.names = "WT_U3")
+
+WT_U4_bamsums <- data.frame(A = sum(WT_U4_bamstats$A), 
+                            C = sum(WT_U4_bamstats$C),
+                            T = sum(WT_U4_bamstats$T),
+                            G = sum(WT_U4_bamstats$G),
+                            N = sum(WT_U4_bamstats$N),
+                            row.names = "WT_U4")
+
+greAB_H1_bamsums <- data.frame(A = sum(greAB_H1_bamstats$A), 
+                               C = sum(greAB_H1_bamstats$C),
+                               T = sum(greAB_H1_bamstats$T),
+                               G = sum(greAB_H1_bamstats$G),
+                               N = sum(greAB_H1_bamstats$N),
+                              row.names = "greAB_H1")
+
+greAB_H2_bamsums <- data.frame(A = sum(greAB_H2_bamstats$A), 
+                               C = sum(greAB_H2_bamstats$C),
+                               T = sum(greAB_H2_bamstats$T),
+                               G = sum(greAB_H2_bamstats$G),
+                               N = sum(greAB_H2_bamstats$N),
+                               row.names = "greAB_H2")
+
+greAB_H3_bamsums <- data.frame(A = sum(greAB_H3_bamstats$A), 
+                               C = sum(greAB_H3_bamstats$C),
+                               T = sum(greAB_H3_bamstats$T),
+                               G = sum(greAB_H3_bamstats$G),
+                               N = sum(greAB_H3_bamstats$N),
+                               row.names = "greAB_H3")
+
+greAB_H4_bamsums <- data.frame(A = sum(greAB_H4_bamstats$A), 
+                               C = sum(greAB_H4_bamstats$C),
+                               T = sum(greAB_H4_bamstats$T),
+                               G = sum(greAB_H4_bamstats$G),
+                               N = sum(greAB_H4_bamstats$N),
+                               row.names = "greAB_H4")
+
+greAB_U1_bamsums <- data.frame(A = sum(greAB_U1_bamstats$A), 
+                               C = sum(greAB_U1_bamstats$C),
+                               T = sum(greAB_U1_bamstats$T),
+                               G = sum(greAB_U1_bamstats$G),
+                               N = sum(greAB_U1_bamstats$N),
+                              row.names = "greAB_U1")
+
+greAB_U2_bamsums <- data.frame(A = sum(greAB_U2_bamstats$A), 
+                               C = sum(greAB_U2_bamstats$C),
+                               T = sum(greAB_U2_bamstats$T),
+                               G = sum(greAB_U2_bamstats$G),
+                               N = sum(greAB_U2_bamstats$N),
+                              row.names = "greAB_U2")
+
+greAB_U3_bamsums <- data.frame(A = sum(greAB_U3_bamstats$A), 
+                               C = sum(greAB_U3_bamstats$C),
+                               T = sum(greAB_U3_bamstats$T),
+                               G = sum(greAB_U3_bamstats$G),
+                               N = sum(greAB_U3_bamstats$N),
+                              row.names = "greAB_U3")
+
+greAB_U4_bamsums <- data.frame(A = sum(greAB_U4_bamstats$A), 
+                               C = sum(greAB_U4_bamstats$C),
+                               T = sum(greAB_U4_bamstats$T),
+                               G = sum(greAB_U4_bamstats$G),
+                               N = sum(greAB_U4_bamstats$N),
+                              row.names = "greAB_U4")
+```
+
+```{r}
+
+#combining all the nucleotide sum dataframes into one 
+
+bamsums_all <- rbind(WT_U1_bamsums,
+                     WT_U2_bamsums,
+                     WT_U3_bamsums,
+                     WT_U4_bamsums,
+                     WT_H1_bamsums, 
+                     WT_H2_bamsums, 
+                     WT_H3_bamsums,
+                     WT_H4_bamsums,
+                     greAB_U1_bamsums,
+                     greAB_U2_bamsums,
+                     greAB_U3_bamsums,
+                     greAB_U4_bamsums,
+                     greAB_H1_bamsums,
+                     greAB_H2_bamsums,
+                     greAB_H3_bamsums,
+                     greAB_H4_bamsums)
+
+bamsums_all <- bamsums_all %>%
+  mutate(total = rowSums(.)) #adding a column with the total number of nucleotides per sample
+
+```
+
+```{r}
+
+WT_H1_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/WT_H1_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+WT_H2_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/WT_H2_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+WT_H3_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/WT_H3_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+WT_H4_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/WT_H4_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+WT_U1_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/WT_U1_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+WT_U2_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/WT_U2_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+WT_U3_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/WT_U3_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+WT_U4_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/WT_U4_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+greAB_H1_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/greAB_H1_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+greAB_H2_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/greAB_H2_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+greAB_H3_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/greAB_H3_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+greAB_H4_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/greAB_H4_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+greAB_U1_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/greAB_U1_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+greAB_U2_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/greAB_U2_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+greAB_U3_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/greAB_U3_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+greAB_U4_snpgenes <- read.table("data/sashi_rnaseq/bowtie2/nosingletons/freebayes/bcftools/snpfiltered/genes/greAB_U4_genes_snpfiltered_bcftools.txt",
+                                 sep = "\t")
+
+#reading in the snp_filtered list of genes from the variant calling
+```
+
+```{r}
+
+#removing rows that contain weird annotation of alternative allele count
+
+WT_H1_snpgenes <- WT_H1_snpgenes[!grepl(",",WT_H1_snpgenes$V8),]
+WT_H2_snpgenes <- WT_H2_snpgenes[!grepl(",",WT_H2_snpgenes$V8),]
+WT_H3_snpgenes <- WT_H3_snpgenes[!grepl(",",WT_H3_snpgenes$V8),]
+WT_H4_snpgenes <- WT_H4_snpgenes[!grepl(",",WT_H4_snpgenes$V8),]
+
+WT_U1_snpgenes <- WT_U1_snpgenes[!grepl(",",WT_U1_snpgenes$V8),]
+WT_U2_snpgenes <- WT_U2_snpgenes[!grepl(",",WT_U2_snpgenes$V8),]
+WT_U3_snpgenes <- WT_U3_snpgenes[!grepl(",",WT_U3_snpgenes$V8),]
+WT_U4_snpgenes <- WT_U4_snpgenes[!grepl(",",WT_U4_snpgenes$V8),]
+
+greAB_H1_snpgenes <- greAB_H1_snpgenes[!grepl(",",greAB_H1_snpgenes$V8),]
+greAB_H2_snpgenes <- greAB_H2_snpgenes[!grepl(",",greAB_H2_snpgenes$V8),]
+greAB_H3_snpgenes <- greAB_H3_snpgenes[!grepl(",",greAB_H3_snpgenes$V8),]
+greAB_H4_snpgenes <- greAB_H4_snpgenes[!grepl(",",greAB_H4_snpgenes$V8),]
+
+greAB_U1_snpgenes <- greAB_U1_snpgenes[!grepl(",",greAB_U1_snpgenes$V8),]
+greAB_U2_snpgenes <- greAB_U2_snpgenes[!grepl(",",greAB_U2_snpgenes$V8),]
+greAB_U3_snpgenes <- greAB_U3_snpgenes[!grepl(",",greAB_U3_snpgenes$V8),]
+greAB_U4_snpgenes <- greAB_U4_snpgenes[!grepl(",",greAB_U4_snpgenes$V8),]
+
+
+```
+
+```{r}
+
+#removing any variants that are not located in an annotated transcript, and that have alternative allele counts > 2 (to remove any variants that may be due to genomic errors)
+
+WT_H1_snps <- WT_H1_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+WT_H2_snps <- WT_H2_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+WT_H3_snps <- WT_H3_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+WT_H4_snps <- WT_H4_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+WT_U1_snps <- WT_U1_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+WT_U2_snps <- WT_U2_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+WT_U3_snps <- WT_U3_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+WT_U4_snps <- WT_U4_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+greAB_H1_snps <- greAB_H1_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+greAB_H2_snps <- greAB_H2_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+greAB_H3_snps <- greAB_H3_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+greAB_H4_snps <- greAB_H4_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+greAB_U1_snps <- greAB_U1_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+greAB_U2_snps <- greAB_U2_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+greAB_U3_snps <- greAB_U3_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+greAB_U4_snps <- greAB_U4_snpgenes %>%
+  filter(V6 != ".") %>%
+  transform(V8 = as.numeric(V8)) %>%
+  filter(V8 <= 2)
+
+```
+
+```{r}
+
+#determining the unique mismatch counts per strand, per reference base
+
+WT_H1_sum <- WT_H1_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+WT_H2_sum <- WT_H2_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+WT_H3_sum <- WT_H3_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+WT_H4_sum <- WT_H4_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+WT_U1_sum <- WT_U1_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+WT_U2_sum <- WT_U2_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+WT_U3_sum <- WT_U3_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+WT_U4_sum <- WT_U4_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+greAB_H1_sum <- greAB_H1_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+greAB_H2_sum <- greAB_H2_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+greAB_H3_sum <- greAB_H3_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+greAB_H4_sum <- greAB_H4_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+greAB_U1_sum <- greAB_U1_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+greAB_U2_sum <- greAB_U2_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+greAB_U3_sum <- greAB_U3_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+greAB_U4_sum <- greAB_U4_snps %>%
+  group_by(V3, V7, V4) %>%
+  summarize(n = n())
+
+
+```
+
+```{r}
+
+#filtering the mismatch types into those present on the sense strand vs antisense strand
+
+WT_U1_sum_sense <- WT_U1_sum %>%
+  filter(V7 == "+")
+
+#for transcripts on the antisense strand, changing the reference and alternate bases to be complementary in order to report the nucleotides that would actually be observed on the RNA transcript (since freebayes calls from the reference genome and not the transcriptome)
+
+WT_U1_sum_antisense <- WT_U1_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+WT_U2_sum_sense <- WT_U2_sum %>%
+  filter(V7 == "+")
+
+WT_U2_sum_antisense <- WT_U2_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+WT_U3_sum_sense <- WT_U3_sum %>%
+  filter(V7 == "+")
+
+WT_U3_sum_antisense <- WT_U3_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+WT_U4_sum_sense <- WT_U4_sum %>%
+  filter(V7 == "+")
+
+WT_U4_sum_antisense <- WT_U4_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))  
+
+WT_H1_sum_sense <- WT_H1_sum %>%
+  filter(V7 == "+")
+
+WT_H1_sum_antisense <- WT_H1_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+WT_H2_sum_sense <- WT_H2_sum %>%
+  filter(V7 == "+")
+
+WT_H2_sum_antisense <- WT_H2_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+WT_H3_sum_sense <- WT_H3_sum %>%
+  filter(V7 == "+")
+
+WT_H3_sum_antisense <- WT_H3_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+WT_H4_sum_sense <- WT_H4_sum %>%
+  filter(V7 == "+")
+
+WT_H4_sum_antisense <- WT_H4_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+greAB_U1_sum_sense <- greAB_U1_sum %>%
+  filter(V7 == "+")
+
+greAB_U1_sum_antisense <- greAB_U1_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+greAB_U2_sum_sense <- greAB_U2_sum %>%
+  filter(V7 == "+")
+
+greAB_U2_sum_antisense <- greAB_U2_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+greAB_U3_sum_sense <- greAB_U3_sum %>%
+  filter(V7 == "+")
+
+greAB_U3_sum_antisense <- greAB_U3_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+greAB_U4_sum_sense <- greAB_U4_sum %>%
+  filter(V7 == "+")
+
+greAB_U4_sum_antisense <- greAB_U4_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+greAB_H1_sum_sense <- greAB_H1_sum %>%
+  filter(V7 == "+")
+
+greAB_H1_sum_antisense <- greAB_H1_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+greAB_H2_sum_sense <- greAB_H2_sum %>%
+  filter(V7 == "+")
+
+greAB_H2_sum_antisense <- greAB_H2_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+greAB_H3_sum_sense <- greAB_H3_sum %>%
+  filter(V7 == "+")
+
+greAB_H3_sum_antisense <- greAB_H3_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+greAB_H4_sum_sense <- greAB_H4_sum %>%
+  filter(V7 == "+")
+
+greAB_H4_sum_antisense <- greAB_H4_sum %>%
+  filter(V7 == "-") %>%
+  mutate(V3 = recode(V3, "A" = "T", "C" = "G", "G" = "C", "T" = "A"),
+         V4 = recode(V4, "A" = "T", "C" = "G", "G" = "C", "T" = "A"))
+
+
+```
+
+```{r}
+
+#merging the corrected antisense variants back into the sense variant data
+
+WT_U1_sum_fixed <- merge(WT_U1_sum_sense, WT_U1_sum_antisense, by = c("V3", "V4"),)
+
+#adding the variant observations from each data set together to generate the total variant count within the transcriptome
+
+WT_U1_sum_fixed$WT_U1 <- WT_U1_sum_fixed$n.x + WT_U1_sum_fixed$n.y
+
+#selecting the columns I want to keep and then renaming the column names to be more informative
+
+WT_U1 <- WT_U1_sum_fixed %>%
+  select(V3, V4, WT_U1) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+WT_U2_sum_fixed <- merge(WT_U2_sum_sense, WT_U2_sum_antisense, by = c("V3", "V4"),)
+
+WT_U2_sum_fixed$WT_U2 <- WT_U2_sum_fixed$n.x + WT_U2_sum_fixed$n.y
+
+WT_U2 <- WT_U2_sum_fixed %>%
+  select(V3, V4, WT_U2) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+WT_U3_sum_fixed <- merge(WT_U3_sum_sense, WT_U3_sum_antisense, by = c("V3", "V4"),)
+
+WT_U3_sum_fixed$WT_U3 <- WT_U3_sum_fixed$n.x + WT_U3_sum_fixed$n.y
+
+WT_U3 <- WT_U3_sum_fixed %>%
+  select(V3, V4, WT_U3) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+WT_U4_sum_fixed <- merge(WT_U4_sum_sense, WT_U4_sum_antisense, by = c("V3", "V4"),)
+
+WT_U4_sum_fixed$WT_U4 <- WT_U4_sum_fixed$n.x + WT_U4_sum_fixed$n.y
+
+WT_U4 <- WT_U4_sum_fixed %>%
+  select(V3, V4, WT_U4) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+WT_H1_sum_fixed <- merge(WT_H1_sum_sense, WT_H1_sum_antisense, by = c("V3", "V4"),)
+
+WT_H1_sum_fixed$WT_H1 <- WT_H1_sum_fixed$n.x + WT_H1_sum_fixed$n.y
+
+WT_H1 <- WT_H1_sum_fixed %>%
+  select(V3, V4, WT_H1) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+WT_H2_sum_fixed <- merge(WT_H2_sum_sense, WT_H2_sum_antisense, by = c("V3", "V4"),)
+
+WT_H2_sum_fixed$WT_H2 <- WT_H2_sum_fixed$n.x + WT_H2_sum_fixed$n.y
+
+WT_H2 <- WT_H2_sum_fixed %>%
+  select(V3, V4, WT_H2) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+WT_H3_sum_fixed <- merge(WT_H3_sum_sense, WT_H3_sum_antisense, by = c("V3", "V4"),)
+
+WT_H3_sum_fixed$WT_H3 <- WT_H3_sum_fixed$n.x + WT_H3_sum_fixed$n.y
+
+WT_H3 <- WT_H3_sum_fixed %>%
+  select(V3, V4, WT_H3) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+WT_H4_sum_fixed <- merge(WT_H4_sum_sense, WT_H4_sum_antisense, by = c("V3", "V4"),)
+
+WT_H4_sum_fixed$WT_H4 <- WT_H4_sum_fixed$n.x + WT_H4_sum_fixed$n.y
+
+WT_H4 <- WT_H4_sum_fixed %>%
+  select(V3, V4, WT_H4) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+greAB_U1_sum_fixed <- merge(greAB_U1_sum_sense, greAB_U1_sum_antisense, by = c("V3", "V4"),)
+
+greAB_U1_sum_fixed$greAB_U1 <- greAB_U1_sum_fixed$n.x + greAB_U1_sum_fixed$n.y
+
+greAB_U1 <- greAB_U1_sum_fixed %>%
+  select(V3, V4, greAB_U1) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+greAB_U2_sum_fixed <- merge(greAB_U2_sum_sense, greAB_U2_sum_antisense, by = c("V3", "V4"),)
+
+greAB_U2_sum_fixed$greAB_U2 <- greAB_U2_sum_fixed$n.x + greAB_U2_sum_fixed$n.y
+
+greAB_U2 <- greAB_U2_sum_fixed %>%
+  select(V3, V4, greAB_U2) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+greAB_U3_sum_fixed <- merge(greAB_U3_sum_sense, greAB_U3_sum_antisense, by = c("V3", "V4"),)
+
+greAB_U3_sum_fixed$greAB_U3 <- greAB_U3_sum_fixed$n.x + greAB_U3_sum_fixed$n.y
+
+greAB_U3 <- greAB_U3_sum_fixed %>%
+  select(V3, V4, greAB_U3) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+greAB_U4_sum_fixed <- merge(greAB_U4_sum_sense, greAB_U4_sum_antisense, by = c("V3", "V4"),)
+
+greAB_U4_sum_fixed$greAB_U4 <- greAB_U4_sum_fixed$n.x + greAB_U4_sum_fixed$n.y
+
+greAB_U4 <- greAB_U4_sum_fixed %>%
+  select(V3, V4, greAB_U4) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+greAB_H1_sum_fixed <- merge(greAB_H1_sum_sense, greAB_H1_sum_antisense, by = c("V3", "V4"),)
+
+greAB_H1_sum_fixed$greAB_H1 <- greAB_H1_sum_fixed$n.x + greAB_H1_sum_fixed$n.y
+
+greAB_H1 <- greAB_H1_sum_fixed %>%
+  select(V3, V4, greAB_H1) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+greAB_H2_sum_fixed <- merge(greAB_H2_sum_sense, greAB_H2_sum_antisense, by = c("V3", "V4"),)
+
+greAB_H2_sum_fixed$greAB_H2 <- greAB_H2_sum_fixed$n.x + greAB_H2_sum_fixed$n.y
+
+greAB_H2 <- greAB_H2_sum_fixed %>%
+  select(V3, V4, greAB_H2) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+greAB_H3_sum_fixed <- merge(greAB_H3_sum_sense, greAB_H3_sum_antisense, by = c("V3", "V4"),)
+
+greAB_H3_sum_fixed$greAB_H3 <- greAB_H3_sum_fixed$n.x + greAB_H3_sum_fixed$n.y
+
+greAB_H3 <- greAB_H3_sum_fixed %>%
+  select(V3, V4, greAB_H3) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+greAB_H4_sum_fixed <- merge(greAB_H4_sum_sense, greAB_H4_sum_antisense, by = c("V3", "V4"),)
+
+greAB_H4_sum_fixed$greAB_H4 <- greAB_H4_sum_fixed$n.x + greAB_H4_sum_fixed$n.y
+
+greAB_H4 <- greAB_H4_sum_fixed %>%
+  select(V3, V4, greAB_H4) %>%
+  dplyr::rename(REF = V3) %>%
+  dplyr::rename(ALT = V4)
+
+```
+
+```{r}
+
+#combining all the variant counts into one dataframe
+
+snps <- data.frame(WT_U1$REF, WT_U1$ALT, WT_U1$WT_U1,
+                      WT_U2$WT_U2,
+                      WT_U3$WT_U3,
+                      WT_U4$WT_U4,
+                      WT_H1$WT_H1,
+                      WT_H2$WT_H2,
+                      WT_H3$WT_H3,
+                      WT_H4$WT_H4,
+                   greAB_U1$greAB_U1,
+                      greAB_U2$greAB_U2,
+                      greAB_U3$greAB_U3,
+                      greAB_U4$greAB_U4,
+                      greAB_H1$greAB_H1,
+                      greAB_H2$greAB_H2,
+                      greAB_H3$greAB_H3,
+                      greAB_H4$greAB_H4)
+
+#renaming the rownames to the mismatch type
+
+rownames(snps) <- c("AtoC","AtoG","AtoT",
+                       "CtoA","CtoG","CtoT",
+                       "GtoA","GtoC","GtoT",
+                       "TtoA","TtoC","TtoG")
+
+#removing the ref/alt base columns to clean the data
+
+snps <- select(snps, WT_U1.WT_U1,	WT_U2.WT_U2,	WT_U3.WT_U3,	WT_U4.WT_U4,	WT_H1.WT_H1,	WT_H2.WT_H2,	WT_H3.WT_H3,	WT_H4.WT_H4,
+               greAB_U1.greAB_U1,	greAB_U2.greAB_U2,	greAB_U3.greAB_U3,	greAB_U4.greAB_U4,	greAB_H1.greAB_H1,	greAB_H2.greAB_H2,	greAB_H3.greAB_H3,	greAB_H4.greAB_H4)
+
+#transposing the dataset to match the format of the total sequenced nucleotide data
+
+snps <- as.data.frame(t(snps))
+
+#calculating the sum of observations per sample
+
+snps <- snps %>%
+  mutate(total = rowSums(.))
+
+```
+
+```{r}
+#calculating the mismatch rate on a per sequenced base, per sample basis
+
+AtoC_rate <- snps$AtoC / bamsums_all$A
+AtoT_rate <- snps$AtoT / bamsums_all$A
+AtoG_rate <- snps$AtoG / bamsums_all$A
+
+CtoA_rate <- snps$CtoA / bamsums_all$C
+CtoT_rate <- snps$CtoT / bamsums_all$C
+CtoG_rate <- snps$CtoG / bamsums_all$C
+
+TtoA_rate <- snps$TtoA / bamsums_all$T
+TtoC_rate <- snps$TtoC / bamsums_all$T
+TtoG_rate <- snps$TtoG / bamsums_all$T
+
+GtoA_rate <- snps$GtoA / bamsums_all$G
+GtoC_rate <- snps$GtoC / bamsums_all$G
+GtoT_rate <- snps$GtoT / bamsums_all$G
+
+#generating a dataframe from the above calculations
+
+mismatch_snps <- data.frame(AtoC_rate, AtoT_rate, AtoG_rate,
+                            CtoA_rate, CtoT_rate, CtoG_rate,
+                            TtoA_rate, TtoC_rate, TtoG_rate,
+                            GtoA_rate, GtoC_rate, GtoT_rate)
+
+#adding rowname information
+
+rownames(mismatch_snps) <- c("WT_U1", "WT_U2", "WT_U3", "WT_U4",
+                               "WT_H1", "WT_H2", "WT_H3", "WT_H4",
+                               "greAB_U1", "greAB_U2", "greAB_U3", "greAB_U4",
+                               "greAB_H1", "greAB_H2", "greAB_H3", "greAB_H4")
+
+#adding a column for calculating total mutation rate per sample
+
+mismatch_snps <- mismatch_snps %>%
+  mutate(total_rate = snps$total / bamsums_all$total)
+
+```
+
+This next section is parsing the data for over-representation analysis and transcriptome profile mapping
+
+```{r}
+
+#selecting only the column containing transcript IDs 
+
+WT_H1_cDNA <- WT_H1_snps %>%
+  select(V6)
+
+#counting the total number of unique variants per transcript
+
+WT_H1_variants <- WT_H1_cDNA %>%
+  group_by(V6) %>%
+  summarise(WT_H1 = n())
+
+WT_H2_cDNA <- WT_H2_snps %>%
+  select(V6)
+
+WT_H2_variants <- WT_H2_cDNA %>%
+  group_by(V6) %>%
+  summarise(WT_H2 = n())
+
+WT_H3_cDNA <- WT_H3_snps %>%
+  select(V6)
+
+WT_H3_variants <- WT_H3_cDNA %>%
+  group_by(V6) %>%
+  summarise(WT_H3 = n())
+
+WT_H4_cDNA <- WT_H4_snps %>%
+  select(V6)
+
+WT_H4_variants <- WT_H4_cDNA %>%
+  group_by(V6) %>%
+  summarise(WT_H4 = n())
+
+WT_U1_cDNA <- WT_U1_snps %>%
+  select(V6)
+
+WT_U1_variants <- WT_U1_cDNA %>%
+  group_by(V6) %>%
+  summarise(WT_U1 = n())
+
+WT_U2_cDNA <- WT_U2_snps %>%
+  select(V6)
+
+WT_U2_variants <- WT_U2_cDNA %>%
+  group_by(V6) %>%
+  summarise(WT_U2 = n())
+
+WT_U3_cDNA <- WT_U3_snps %>%
+  select(V6)
+
+WT_U3_variants <- WT_U3_cDNA %>%
+  group_by(V6) %>%
+  summarise(WT_U3 = n())
+
+WT_U4_cDNA <- WT_U4_snps %>%
+  select(V6)
+
+WT_U4_variants <- WT_U4_cDNA %>%
+  group_by(V6) %>%
+  summarise(WT_U4 = n())
+
+greAB_H1_cDNA <- greAB_H1_snps %>%
+  select(V6)
+
+greAB_H1_variants <- greAB_H1_cDNA %>%
+  group_by(V6) %>%
+  summarise(greAB_H1 = n())
+
+greAB_H2_cDNA <- greAB_H2_snps %>%
+  select(V6)
+
+greAB_H2_variants <- greAB_H2_cDNA %>%
+  group_by(V6) %>%
+  summarise(greAB_H2 = n())
+
+greAB_H3_cDNA <- greAB_H3_snps %>%
+  select(V6)
+
+greAB_H3_variants <- greAB_H3_cDNA %>%
+  group_by(V6) %>%
+  summarise(greAB_H3 = n())
+
+greAB_H4_cDNA <- greAB_H4_snps %>%
+  select(V6)
+
+greAB_H4_variants <- greAB_H4_cDNA %>%
+  group_by(V6) %>%
+  summarise(greAB_H4 = n())
+
+greAB_U1_cDNA <- greAB_U1_snps %>%
+  select(V6)
+
+greAB_U1_variants <- greAB_U1_cDNA %>%
+  group_by(V6) %>%
+  summarise(greAB_U1 = n())
+
+greAB_U2_cDNA <- greAB_U2_snps %>%
+  select(V6)
+
+greAB_U2_variants <- greAB_U2_cDNA %>%
+  group_by(V6) %>%
+  summarise(greAB_U2 = n())
+
+greAB_U3_cDNA <- greAB_U3_snps %>%
+  select(V6)
+
+greAB_U3_variants <- greAB_U3_cDNA %>%
+  group_by(V6) %>%
+  summarise(greAB_U3 = n())
+
+greAB_U4_cDNA <- greAB_U4_snps %>%
+  select(V6)
+
+greAB_U4_variants <- greAB_U4_cDNA %>%
+  group_by(V6) %>%
+  summarise(greAB_U4 = n())
+
+```
+
+```{r}
+
+#combining the replicate data row-wise 
+
+WT_H <- rbind(WT_H1_cDNA, WT_H2_cDNA, WT_H3_cDNA, WT_H4_cDNA)
+
+WT_U <- rbind(WT_U1_cDNA, WT_U2_cDNA, WT_U3_cDNA, WT_U4_cDNA)
+
+greAB_H <- rbind(greAB_H1_cDNA, greAB_H2_cDNA, greAB_H3_cDNA, greAB_H4_cDNA)
+
+greAB_U <- rbind(greAB_U1_cDNA, greAB_U2_cDNA, greAB_U3_cDNA, greAB_U4_cDNA)
+
+#counting the total number of variant observations per transcript across all replicates in a sample set
+
+WT_H <- WT_H %>%
+  group_by(V6) %>%
+  summarise(n = n())
+
+WT_U <- WT_U %>%
+  group_by(V6) %>%
+  summarise(n = n())
+
+greAB_U <- greAB_U %>%
+  group_by(V6) %>%
+  summarise(n = n())
+
+greAB_H <- greAB_H %>%
+  group_by(V6) %>%
+  summarise(n = n())
+```
+
+```{r}
+
+#generating a locus_tag / gene key
+
+tag_gene <- select(combined_features, locus_tag, gene)
+
+#changing the few genes within STM14_900s to be labeled as STM14_0900 to enable effective sorting
+
+tag_gene$locus_tag <- gsub("_9", "_09", tag_gene$locus_tag)
+
+#arranging by locus_tag ID
+
+tag_gene <- arrange(tag_gene, locus_tag)
+
+#adding the gene names onto the genes identified in each sample set (ie: only transcript that had variants are in this dataset)
+
+WT_H_ann <- left_join(WT_H, tag_gene, by = c("V6" = "locus_tag"))
+
+WT_U_ann <- left_join(WT_U, tag_gene, by = c("V6" = "locus_tag"))
+
+greAB_H_ann <- left_join(greAB_H, tag_gene, by = c("V6" = "locus_tag"))
+
+greAB_U_ann <- left_join(greAB_U, tag_gene, by = c("V6" = "locus_tag"))
+
+```
+
+```{r}
+
+#changing the few genes within STM14_900s to be labeled as STM14_0900 to match transcriptome annotation change above
+
+WT_H1_variants$V6 <- gsub("_9", "_09", WT_H1_variants$V6)
+WT_H2_variants$V6 <- gsub("_9", "_09", WT_H2_variants$V6)
+WT_H3_variants$V6 <- gsub("_9", "_09", WT_H3_variants$V6)
+WT_H4_variants$V6 <- gsub("_9", "_09", WT_H4_variants$V6)
+
+WT_U1_variants$V6 <- gsub("_9", "_09", WT_U1_variants$V6)
+WT_U2_variants$V6 <- gsub("_9", "_09", WT_U2_variants$V6)
+WT_U3_variants$V6 <- gsub("_9", "_09", WT_U3_variants$V6)
+WT_U4_variants$V6 <- gsub("_9", "_09", WT_U4_variants$V6)
+
+greAB_H1_variants$V6 <- gsub("_9", "_09", greAB_H1_variants$V6)
+greAB_H2_variants$V6 <- gsub("_9", "_09", greAB_H2_variants$V6)
+greAB_H3_variants$V6 <- gsub("_9", "_09", greAB_H3_variants$V6)
+greAB_H4_variants$V6 <- gsub("_9", "_09", greAB_H4_variants$V6)
+
+greAB_U1_variants$V6 <- gsub("_9", "_09", greAB_U1_variants$V6)
+greAB_U2_variants$V6 <- gsub("_9", "_09", greAB_U2_variants$V6)
+greAB_U3_variants$V6 <- gsub("_9", "_09", greAB_U3_variants$V6)
+greAB_U4_variants$V6 <- gsub("_9", "_09", greAB_U4_variants$V6)
+
+#creating a dataset of the variants identified per replicate, mapped onto the full transcriptome
+
+WT_H_combined <- tag_gene %>%
+  left_join(., WT_H1_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., WT_H2_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., WT_H3_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., WT_H4_variants, by = c("locus_tag" = "V6"))
+
+WT_U_combined <- tag_gene %>%
+  left_join(., WT_U1_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., WT_U2_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., WT_U3_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., WT_U4_variants, by = c("locus_tag" = "V6"))
+  
+greAB_H_combined <- tag_gene %>%
+  left_join(., greAB_H1_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., greAB_H2_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., greAB_H3_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., greAB_H4_variants, by = c("locus_tag" = "V6"))
+
+greAB_U_combined <- tag_gene %>%
+  left_join(., greAB_U1_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., greAB_U2_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., greAB_U3_variants, by = c("locus_tag" = "V6")) %>%
+  left_join(., greAB_U4_variants, by = c("locus_tag" = "V6"))
+
+#joining the datasets for WT vs greAB into one dataframe each
+
+WT_combined <- left_join(WT_U_combined,
+                         WT_H_combined %>%
+                           select(locus_tag, WT_H1, WT_H2, WT_H3, WT_H4), 
+                         by = "locus_tag")
+
+greAB_combined <- left_join(greAB_U_combined,
+                         greAB_H_combined %>%
+                           select(locus_tag, greAB_H1, greAB_H2, greAB_H3, greAB_H4), 
+                         by = "locus_tag")
+
+#combining all datasets together into one dataframe
+
+all_combined <- left_join(WT_combined, 
+                          greAB_combined %>%
+                            select(locus_tag, greAB_U1, greAB_U2, greAB_U3, greAB_U4, greAB_H1, greAB_H2, greAB_H3, greAB_H4),
+                          by = "locus_tag")
+
+#writing the datasets to a text file
+
+write.table(WT_H_combined, 
+            "data/sashi_rnaseq/results/transcript_fidelity/WT_H_combined.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            na = "",
+            sep = "\t")
+
+write.table(WT_U_combined, 
+            "data/sashi_rnaseq/results/transcript_fidelity/WT_U_combined.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            na = "",
+            sep = "\t")
+
+write.table(greAB_H_combined, 
+            "data/sashi_rnaseq/results/transcript_fidelity/greAB_H_combined.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            na = "",
+            sep = "\t")
+
+write.table(greAB_U_combined, 
+            "data/sashi_rnaseq/results/transcript_fidelity/greAB_U_combined.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            na = "",
+            sep = "\t")
+
+write.table(all_combined, 
+            "data/sashi_rnaseq/results/transcript_fidelity/all_combined.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            na = "",
+            sep = "\t")
+
+```
+
+```{r}
+
+WT_H_go <- enrichKEGG(gene = WT_H$V6,
+                 organism = "seo",
+                 pvalueCutoff = 0.05)
+#performing a KEGG pathway over-representation analysis of all genes
+
+
+WT_H_go_result <- data.frame(WT_H_go@result)
+#converting the go results to a dataframe
+
+write.table(WT_H_go_result, 
+            "data/sashi_rnaseq/results/transcript_fidelity/WT_H_go_result.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            na = "",
+            sep = "\t")
+
+WT_U_go <- enrichKEGG(gene = WT_U$V6,
+                 organism = "seo",
+                 pvalueCutoff = 0.05)
+#performing a KEGG pathway over-representation analysis of all genes
+
+
+WT_U_go_result <- data.frame(WT_U_go@result)
+#converting the go results to a dataframe
+
+write.table(WT_U_go_result, 
+            "data/sashi_rnaseq/results/transcript_fidelity/WT_U_go_result.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            na = "",
+            sep = "\t")
+
+greAB_H_go <- enrichKEGG(gene = greAB_H$V6,
+                 organism = "seo",
+                 pvalueCutoff = 0.05)
+#performing a KEGG pathway over-representation analysis of all genes
+
+
+greAB_H_go_result <- data.frame(greAB_H_go@result)
+#converting the go results to a dataframe
+
+write.table(greAB_H_go_result, 
+            "data/sashi_rnaseq/results/transcript_fidelity/greAB_H_go_result.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            na = "",
+            sep = "\t")
+
+greAB_U_go <- enrichKEGG(gene = greAB_U$V6,
+                 organism = "seo",
+                 pvalueCutoff = 0.05)
+#performing a KEGG pathway over-representation analysis of all genes
+
+
+greAB_U_go_result <- data.frame(greAB_U_go@result)
+#converting the go results to a dataframe
+
+write.table(greAB_U_go_result, 
+            "data/sashi_rnaseq/results/transcript_fidelity/greAB_U_go_result.txt",
+            quote = FALSE,
+            row.names = FALSE,
+            na = "",
+            sep = "\t")
+
+```
+
+```{r, fig.height=2.5, fig.width=4.5}
+
+#filtering out enrichment results that are not significant and adding a column for calculated gene ratio
+
+WT_U_filter <- WT_U_go_result %>%
+  filter(p.adjust <= 0.05) %>%
+  separate(GeneRatio, into = c("enriched_count", "annotated_total"), sep = "/") %>%
+  mutate(gene_ratio = as.numeric(enriched_count) /  as.numeric(annotated_total))
+
+WT_H_filter <- WT_H_go_result %>%
+  filter(p.adjust <= 0.05) %>%
+  separate(GeneRatio, into = c("enriched_count", "annotated_total"), sep = "/") %>%
+  mutate(gene_ratio = as.numeric(enriched_count) /  as.numeric(annotated_total))
+
+greAB_U_filter <- greAB_U_go_result %>%
+  filter(p.adjust <= 0.05) %>%
+  separate(GeneRatio, into = c("enriched_count", "annotated_total"), sep = "/") %>%
+  mutate(gene_ratio = as.numeric(enriched_count) /  as.numeric(annotated_total))
+
+greAB_H_filter <- greAB_H_go_result %>%
+  filter(p.adjust <= 0.05) %>%
+  separate(GeneRatio, into = c("enriched_count", "annotated_total"), sep = "/") %>%
+  mutate(gene_ratio = as.numeric(enriched_count) /  as.numeric(annotated_total))
+
+#plotting the data from each sample set
+
+ggplot(data = WT_U_filter, aes(x= gene_ratio, y = reorder(Description, gene_ratio), fill = p.adjust)) +
+  geom_bar(stat = "identity") + 
+  theme_minimal() +
+  labs(title = "WT - Untreated", x = "Gene Ratio", y = "KEGG Pathway", fill = "p.adjust") + 
+  scale_fill_gradient(low = "red", high = "black", limits = c(0, 0.04))
+
+ggplot(data = WT_H_filter, aes(x= gene_ratio, y = reorder(Description, gene_ratio), fill = p.adjust)) +
+  geom_bar(stat = "identity") + 
+  theme_minimal() +
+  labs(title = "WT - H2O2", x = "Gene Ratio", y = "KEGG Pathway", fill = "p.adjust") + 
+  scale_fill_gradient(low = "red", high = "black", limits = c(0, 0.04))
+
+ggplot(data = greAB_U_filter, aes(x= gene_ratio, y = reorder(Description, gene_ratio), fill = p.adjust)) +
+  geom_bar(stat = "identity") + 
+  theme_minimal() +
+  labs(title = "greAB - Untreated", x = "Gene Ratio", y = "KEGG Pathway", fill = "p.adjust") + 
+  scale_fill_gradient(low = "red", high = "black", limits = c(0, 0.04))
+
+ggplot(data = greAB_H_filter, aes(x= gene_ratio, y = reorder(Description, gene_ratio), fill = p.adjust)) +
+  geom_bar(stat = "identity") + 
+  theme_minimal() +
+  labs(title = "greAB - H2O2", x = "Gene Ratio", y = "KEGG Pathway", fill = "p.adjust") + 
+  scale_fill_gradient(low = "red", high = "black", limits = c(0, 0.04))
+
+```
+
+```{r, fig.height=2.5, fig.width=3.2}
+
+#combining the go result datasets into one dataset 
+
+combined_go <- merge_result(list(WT_Untreated = WT_U_go, WT_H2O2 = WT_H_go, greAB_Untreated = greAB_U_go, greAB_H2O2 = greAB_H_go))
+
+#converting the go results into a data frame
+
+combined_go_result <- data.frame(combined_go@compareClusterResult)
+
+#plotting the data as a dotplot
+
+combined_dot <- dotplot(combined_go, showCategory = 10) + 
+  theme(axis.text.x = element_text(angle = 40, hjust = 1)) +
+  scale_y_discrete(labels=function(x) str_wrap(x, width=60)) + 
+  labs(x = "", y = "KEGG Pathway") +
+  scale_x_discrete(labels=c("WT - Untreated", expression("WT - H"[2]*"O"[2]), "greAB - Untreated", expression("greAB - H"[2]*"O"[2])), expand=c(0.2,0))
+
+combined_dot
+
+#saving the image file locally
+
+ggsave(plot = combined_dot, 
+       path = "data/sashi_rnaseq/results/transcript_fidelity", 
+       filename = "combined_dot.png", 
+       device = "png")
+
+
+```
